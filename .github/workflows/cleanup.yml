@@ -1,0 +1,36 @@
+# 清理旧 Release, 只保留最近 N 个 auto-* 自动编译版本
+
+name: Cleanup
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 21 * * 0"   # UTC 21:00 周日 = 北京时间周一 05:00
+
+permissions:
+  contents: write
+
+concurrency:
+  group: cleanup
+
+jobs:
+  cleanup:
+    name: 清理旧 Release
+    runs-on: ubuntu-latest
+    env:
+      KEEP: 5
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: 删除多余的 auto-* Release
+        run: |
+          mapfile -t tags < <(gh release list --json tagName --jq \
+            '[.[].tagName | select(startswith("auto-"))] | .[]' | tail -n +"$((KEEP + 1))")
+          for tag in "${tags[@]}"; do
+            echo "删除 $tag"
+            gh release delete "$tag" --cleanup-asset --yes
+            gh api -X DELETE "repos/$GITHUB_REPOSITORY/git/refs/tags/$tag" 2>/dev/null || true
+          done
+          echo "完成, 当前保留最近 $KEEP 个"

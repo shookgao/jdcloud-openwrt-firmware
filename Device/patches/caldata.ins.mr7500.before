@@ -1,0 +1,3 @@
+	jdcloud,re-cs-02)
+		caldata_extract_mmc "0:ART" 0x26800 0x20000
+		;;

@@ -1,0 +1,152 @@
+# 京东云三台路由器的 ImmortalWrt 稳定分支云编译
+# 上游: immortalwrt openwrt-25.12 稳定分支 (只收 bugfix)
+# 特点: 每天检查上游, 有新提交才编译; 无第三方插件来源
+
+name: Build
+
+on:
+  workflow_dispatch:
+    inputs:
+      force:
+        description: "跳过上游检查, 强制编译"
+        type: boolean
+        default: false
+  schedule:
+    - cron: "0 22 * * *"   # UTC 22:00 = 北京时间 06:00, 每天检查
+
+env:
+  UPSTREAM_REPO: "https://github.com/immortalwrt/immortalwrt"
+  UPSTREAM_BRANCH: "openwrt-25.12"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: build
+  cancel-in-progress: false
+
+jobs:
+  check:
+    name: 检查上游更新
+    runs-on: ubuntu-latest
+    outputs:
+      should_build: ${{ steps.diff.outputs.should_build }}
+      sha: ${{ steps.diff.outputs.sha }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: 比对上游提交
+        id: diff
+        run: |
+          UP_SHA="$(git ls-remote --refs "$UPSTREAM_REPO" "refs/heads/$UPSTREAM_BRANCH" | cut -f1)"
+          if [ -z "$UP_SHA" ]; then echo "无法获取上游 SHA"; exit 1; fi
+          LAST="$(cat .last-build-sha 2>/dev/null || echo none)"
+          echo "上游最新: $UP_SHA"
+          echo "上次编译: $LAST"
+          echo "sha=$UP_SHA" >> "$GITHUB_OUTPUT"
+          if [ "$UP_SHA" != "$LAST" ]; then
+            echo "上游有更新, 需要编译"
+            echo "should_build=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "上游无变化, 跳过编译"
+            echo "should_build=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  build:
+    name: 编译三台设备固件
+    needs: check
+    if: ${{ (github.event_name == 'workflow_dispatch' && inputs.force) || needs.check.outputs.should_build == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: 安装编译依赖
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            ack antlr3 asciidoc autoconf automake autopoint binutils bison build-essential \
+            bzip2 ccache clang cmake cpio curl device-tree-compiler ecj fastjar flex gawk \
+            gettext gcc-multilib g++-multilib git gnutls-dev gperf haveged help2man \
+            intltool lib32gcc-s1 libc6-dev-i386 libelf-dev libglib2.0-dev libgmp3-dev \
+            libltdl-dev libmpc-dev libmpfr-dev libncurses-dev libncursesw5-dev \
+            libpython3-dev libreadline-dev libssl-dev libtool libyaml-dev libz-dev lld llvm \
+            lrzsz mkisofs msmtp nano ninja-build p7zip p7zip-full patch pkgconf python3 \
+            python3-pip python3-ply python3-docutils python3-pyelftools qemu-utils re2c \
+            rsync scons squashfs-tools subversion swig texinfo uglifyjs unzip vim wget \
+            xmlto xxd zlib1g-dev zstd
+
+      - name: 拉取上游源码
+        run: |
+          git clone --depth 1 --branch "$UPSTREAM_BRANCH" "$UPSTREAM_REPO" openwrt
+          cd openwrt
+          echo "上游版本: $(git rev-parse --short HEAD) $(git log -1 --format=%cd --date=short)"
+
+      - name: 注入三台设备支持
+        run: |
+          chmod +x Scripts/inject.sh
+          ./Scripts/inject.sh "$PWD/openwrt"
+
+      - name: 生成配置
+        run: |
+          cd openwrt
+          cat ../Config/DEVICES.txt ../Config/COMMON.txt > .config
+          make defconfig
+          grep -E "CONFIG_TARGET_DEVICE" .config || { echo "设备配置未生效"; exit 1; }
+
+      - name: 下载源码包
+        run: |
+          cd openwrt
+          make download -j8
+          make download -j1 V=s   # 补齐个别下载失败的文件
+
+      - name: 编译
+        run: |
+          cd openwrt
+          make -j"$(nproc)" || make -j1 V=s
+
+      - name: 整理产物
+        run: |
+          cd openwrt/bin/targets/qualcommax/ipq60xx
+          mkdir -p "$GITHUB_WORKSPACE/output"
+          cp -f *sysupgrade* *factory* sha256sums config.build 2>/dev/null \
+            "$GITHUB_WORKSPACE/output/" || true
+          cd "$GITHUB_WORKSPACE/output"
+          ls -la
+
+      - name: 发布 Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          UP_SHA: ${{ needs.check.outputs.sha }}
+        run: |
+          DATE="$(TZ=Asia/Shanghai date +%Y%m%d)"
+          TAG="auto-${DATE}-${UP_SHA:0:7}"
+          NOTES="$(cat <<'EOF'
+          自动编译, 跟随 immortalwrt openwrt-25.12 稳定分支。
+
+          设备: 京东云雅典娜 RE-CS-02 / 京东云 RE-SS-01 / 连我 NN6000 v2
+
+          刷机: eMMC 设备用 sysupgrade 包在 LuCI 或 sysupgrade 命令升级;
+          从原厂系统刷入请先刷对应机型的第三方 U-Boot (教程见恩山论坛)。
+          校验: 下载后请核对 sha256sums。
+          EOF
+          )"
+          NOTES="$NOTES
+          上游提交: ${UP_SHA}"
+          gh release create "$TAG" output/* \
+            --title "ImmortalWrt 25.12 ($DATE, 上游 ${UP_SHA:0:7})" \
+            --notes "$NOTES" \
+            --latest
+
+      - name: 记录本次上游版本
+        env:
+          UP_SHA: ${{ needs.check.outputs.sha }}
+        run: |
+          echo "$UP_SHA" > .last-build-sha
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add .last-build-sha
+          git commit -m "build: 上游 ${UP_SHA:0:7}"
+          git push

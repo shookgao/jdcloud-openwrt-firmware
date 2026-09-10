@@ -1,0 +1,30 @@
+# 本文件定义固件的通用软件配置。
+# 原则: 只用 immortalwrt 官方 feeds 自带的包, 不引入任何第三方来源。
+# 平台默认已含 (qualcommax target): NSS 加速驱动、USB3、自动挂载、
+# luci-app-cpufreq、autocore、wpad-openssl, 无需在此重复。
+
+# --- 基础系统 ---
+# LuCI 网页管理界面 + 简体中文
+CONFIG_PACKAGE_luci=y
+CONFIG_LUCI_LANG_zh_Hans=y
+
+# 完整版 iproute2 (ss/tc 等网络诊断命令依赖)
+CONFIG_PACKAGE_ip-full=y
+
+# --- USB 存储与文件系统 ---
+# UAS 高速传输 (USB3 U盘/移动硬盘)
+CONFIG_PACKAGE_kmod-usb-storage-uas=y
+
+# 文件系统: ext4 / exFAT / FAT32 / NTFS 读写
+CONFIG_PACKAGE_kmod-fs-ext4=y
+CONFIG_PACKAGE_kmod-fs-exfat=y
+CONFIG_PACKAGE_kmod-fs-vfat=y
+CONFIG_PACKAGE_kmod-fs-ntfs3=y
+
+# 块设备挂载框架 (插盘自动挂载到 /mnt)
+CONFIG_PACKAGE_block-mount=y
+
+# --- 通用内核依赖 ---
+# TUN/TAP 虚拟网卡: 事后安装 Tailscale / ZeroTier 等异地组网工具的前置依赖
+# (kmod 必须与固件内核匹配, 故直接编入固件)
+CONFIG_PACKAGE_kmod-tun=y

@@ -1,0 +1,17 @@
+# 本文件定义三台设备的平台与机型清单。
+# 需要增删编译机型时改这里: 设备名 = immortalwrt 设备 ID。
+# 可选设备参考: https://downloads.immortalwrt.org/snapshots/targets/qualcommax/ipq60xx/
+
+# 平台: 高通 IPQ60xx
+CONFIG_TARGET_qualcommax=y
+CONFIG_TARGET_qualcommax_ipq60xx=y
+CONFIG_TARGET_MULTI_PROFILE=y
+
+# 京东云无线宝雅典娜 AX6600 (RE-CS-02)
+CONFIG_TARGET_DEVICE_qualcommax_ipq60xx_DEVICE_jdcloud_re-cs-02=y
+
+# 京东云无线宝 (RE-SS-01)
+CONFIG_TARGET_DEVICE_qualcommax_ipq60xx_DEVICE_jdcloud_re-ss-01=y
+
+# 连我 NN6000 V2
+CONFIG_TARGET_DEVICE_qualcommax_ipq60xx_DEVICE_link_nn6000-v2=y

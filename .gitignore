@@ -1,0 +1,4 @@
+# 通用忽略
+*.log
+*.tmp
+.DS_Store
