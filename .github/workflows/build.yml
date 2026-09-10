@@ -34,7 +34,7 @@ jobs:
       sha: ${{ steps.diff.outputs.sha }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: 比对上游提交
         id: diff
@@ -59,9 +59,13 @@ jobs:
     if: ${{ (github.event_name == 'workflow_dispatch' && inputs.force) || needs.check.outputs.should_build == 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 350
+    env:
+      # ccache 缓存目录固定在工作区, 供 actions/cache 持久化
+      CCACHE_DIR: ${{ github.workspace }}/.ccache
+      CCACHE_MAXSIZE: "2G"
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: 安装编译依赖
         run: |
@@ -83,6 +87,21 @@ jobs:
           git clone --depth 1 --branch "$UPSTREAM_BRANCH" "$UPSTREAM_REPO" openwrt
           cd openwrt
           echo "上游版本: $(git rev-parse --short HEAD) $(git log -1 --format=%cd --date=short)"
+
+      - name: 恢复源码包缓存
+        uses: actions/cache@v4
+        with:
+          path: openwrt/dl
+          # 固定 key: 首次存入后不再更新, 稳定分支新增源码包很少, 每次增量下载即可
+          key: dl-immortalwrt-25.12
+
+      - name: 恢复编译缓存
+        uses: actions/cache@v4
+        with:
+          path: ${{ github.workspace }}/.ccache
+          # 每次编译按上游 SHA 存新缓存, restore-keys 取最近一份继续累积
+          key: ccache-${{ needs.check.outputs.sha }}
+          restore-keys: ccache-
 
       - name: 注入三台设备支持
         run: |
@@ -149,4 +168,6 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add .last-build-sha
           git commit -m "build: 上游 ${UP_SHA:0:7}"
+          # 防止编译期间有人推送过新提交导致 non-fast-forward
+          git pull --rebase origin "${GITHUB_REF_NAME}"
           git push

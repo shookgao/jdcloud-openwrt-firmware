@@ -28,3 +28,7 @@ CONFIG_PACKAGE_block-mount=y
 # TUN/TAP 虚拟网卡: 事后安装 Tailscale / ZeroTier 等异地组网工具的前置依赖
 # (kmod 必须与固件内核匹配, 故直接编入固件)
 CONFIG_PACKAGE_kmod-tun=y
+
+# --- 构建加速 ---
+# 只影响宿主机编译提速 (对象文件缓存), 不改变固件内容
+CONFIG_CCACHE=y
