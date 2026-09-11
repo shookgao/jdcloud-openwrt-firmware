@@ -101,6 +101,13 @@ jobs:
           cd openwrt
           echo "上游版本: $(git rev-parse --short HEAD) $(git log -1 --format=%cd --date=short)"
 
+      - name: 更新并安装 feeds
+        run: |
+          cd openwrt
+          # LuCI 等包在 feeds 里, 不拉取则 default-settings 的 luci 依赖装不上
+          ./scripts/feeds update -a
+          ./scripts/feeds install -a
+
       - name: 恢复源码包缓存
         uses: actions/cache@v4
         with:
