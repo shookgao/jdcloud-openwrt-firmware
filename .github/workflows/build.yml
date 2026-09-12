@@ -174,6 +174,9 @@ jobs:
           )"
           NOTES="$NOTES
           上游提交: ${UP_SHA}"
+          # 同名 Release 已存在 (同日同上游重编) 时先删再建, 避免撞名导致发布失败
+          gh release delete "$TAG" --yes --cleanup-asset 2>/dev/null || true
+          gh api -X DELETE "repos/$GITHUB_REPOSITORY/git/refs/tags/$TAG" 2>/dev/null || true
           gh release create "$TAG" output/* \
             --title "ImmortalWrt 25.12 ($DATE, 上游 ${UP_SHA:0:7})" \
             --notes "$NOTES" \
@@ -187,7 +190,12 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add .last-build-sha
-          git commit -m "build: 上游 ${UP_SHA:0:7}"
-          # 防止编译期间有人推送过新提交导致 non-fast-forward; autostash 收纳零星工作区改动
-          git -c rebase.autostash=true pull --rebase origin "${GITHUB_REF_NAME}"
-          git push
+          # 同一上游版本重编时内容无变化, git commit 会报 nothing to commit, 直接跳过
+          if git diff --cached --quiet; then
+            echo "上游版本未变化, 无需记录"
+          else
+            git commit -m "build: 上游 ${UP_SHA:0:7}"
+            # 防止编译期间有人推送过新提交导致 non-fast-forward; autostash 收纳零星工作区改动
+            git -c rebase.autostash=true pull --rebase origin "${GITHUB_REF_NAME}"
+            git push
+          fi
