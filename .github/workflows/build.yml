@@ -1,6 +1,6 @@
-# 京东云三台路由器的 ImmortalWrt 稳定分支云编译
-# 上游: immortalwrt openwrt-25.12 稳定分支 (只收 bugfix)
-# 特点: 每天检查上游, 有新提交才编译; 无第三方插件来源
+# 京东云三台路由器的 ImmortalWrt 云编译
+# 上游: immortalwrt 最新正式版 release (全自动检测, 跨大版本自动跟随)
+# 特点: 每天检查上游, 出新正式版才编译; 无第三方插件来源
 
 name: Build
 
@@ -16,7 +16,6 @@ on:
 
 env:
   UPSTREAM_REPO: "https://github.com/immortalwrt/immortalwrt"
-  UPSTREAM_BRANCH: "openwrt-25.12"
 
 permissions:
   contents: write
@@ -32,21 +31,26 @@ jobs:
     outputs:
       should_build: ${{ steps.diff.outputs.should_build }}
       sha: ${{ steps.diff.outputs.sha }}
+      tag: ${{ steps.diff.outputs.tag }}
     steps:
       - name: Checkout
         uses: actions/checkout@v5
 
-      - name: 比对上游提交
+      - name: 检测上游最新正式版
         id: diff
         run: |
-          UP_SHA="$(git ls-remote --refs "$UPSTREAM_REPO" "refs/heads/$UPSTREAM_BRANCH" | cut -f1)"
-          if [ -z "$UP_SHA" ]; then echo "无法获取上游 SHA"; exit 1; fi
+          UP_TAG="$(git ls-remote --refs "$UPSTREAM_REPO" 'refs/tags/v*' \
+            | sed 's|.*refs/tags/||' | grep -v -- '-rc' | sort -rV | head -n1)"
+          if [ -z "$UP_TAG" ]; then echo "无法获取上游 release 列表"; exit 1; fi
+          UP_SHA="$(git ls-remote --refs "$UPSTREAM_REPO" "refs/tags/$UP_TAG" | cut -f1)"
+          if [ -z "$UP_SHA" ]; then echo "无法获取 $UP_TAG 的提交号"; exit 1; fi
           LAST="$(cat .last-build-sha 2>/dev/null || echo none)"
-          echo "上游最新: $UP_SHA"
+          echo "上游最新: $UP_TAG ($UP_SHA)"
           echo "上次编译: $LAST"
+          echo "tag=$UP_TAG" >> "$GITHUB_OUTPUT"
           echo "sha=$UP_SHA" >> "$GITHUB_OUTPUT"
           if [ "$UP_SHA" != "$LAST" ]; then
-            echo "上游有更新, 需要编译"
+            echo "有新正式版, 需要编译"
             echo "should_build=true" >> "$GITHUB_OUTPUT"
           else
             echo "上游无变化, 跳过编译"
@@ -96,10 +100,12 @@ jobs:
             xmlto xxd zlib1g-dev zstd
 
       - name: 拉取上游源码
+        env:
+          UP_TAG: ${{ needs.check.outputs.tag }}
         run: |
-          git clone --depth 1 --branch "$UPSTREAM_BRANCH" "$UPSTREAM_REPO" openwrt
+          git clone --depth 1 --branch "$UP_TAG" "$UPSTREAM_REPO" openwrt
           cd openwrt
-          echo "上游版本: $(git rev-parse --short HEAD) $(git log -1 --format=%cd --date=short)"
+          echo "上游版本: $UP_TAG ($(git rev-parse --short HEAD)) $(git log -1 --format=%cd --date=short)"
 
       - name: 更新并安装 feeds
         run: |
@@ -112,8 +118,9 @@ jobs:
         uses: actions/cache@v4
         with:
           path: openwrt/dl
-          # 固定 key: 首次存入后不再更新, 稳定分支新增源码包很少, 每次增量下载即可
-          key: dl-immortalwrt-25.12
+          # 跟随上游版本滚动: 新版本存新 key, restore-keys 兜底取最近一份
+          key: dl-${{ needs.check.outputs.tag }}
+          restore-keys: dl-
 
       - name: 恢复编译缓存
         uses: actions/cache@v4
@@ -159,11 +166,12 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           UP_SHA: ${{ needs.check.outputs.sha }}
+          UP_TAG: ${{ needs.check.outputs.tag }}
         run: |
           DATE="$(TZ=Asia/Shanghai date +%Y%m%d)"
-          TAG="auto-${DATE}-${UP_SHA:0:7}"
+          TAG="auto-${DATE}-${UP_TAG}"
           NOTES="$(cat <<'EOF'
-          自动编译, 跟随 immortalwrt openwrt-25.12 稳定分支。
+          自动编译, 基于 immortalwrt 25.12 系列正式版。
 
           设备: 京东云雅典娜 RE-CS-02 / 京东云 RE-SS-01 / 连我 NN6000 v2
 
@@ -173,18 +181,19 @@ jobs:
           EOF
           )"
           NOTES="$NOTES
-          上游提交: ${UP_SHA}"
+          上游版本: ${UP_TAG}"
           # 同名 Release 已存在 (同日同上游重编) 时先删再建, 避免撞名导致发布失败
           gh release delete "$TAG" --yes --cleanup-asset 2>/dev/null || true
           gh api -X DELETE "repos/$GITHUB_REPOSITORY/git/refs/tags/$TAG" 2>/dev/null || true
           gh release create "$TAG" output/* \
-            --title "ImmortalWrt 25.12 ($DATE, 上游 ${UP_SHA:0:7})" \
+            --title "ImmortalWrt $UP_TAG ($DATE)" \
             --notes "$NOTES" \
             --latest
 
       - name: 记录本次上游版本
         env:
           UP_SHA: ${{ needs.check.outputs.sha }}
+          UP_TAG: ${{ needs.check.outputs.tag }}
         run: |
           echo "$UP_SHA" > .last-build-sha
           git config user.name "github-actions[bot]"
@@ -194,7 +203,7 @@ jobs:
           if git diff --cached --quiet; then
             echo "上游版本未变化, 无需记录"
           else
-            git commit -m "build: 上游 ${UP_SHA:0:7}"
+            git commit -m "build: 上游 ${UP_TAG}"
             # 防止编译期间有人推送过新提交导致 non-fast-forward; autostash 收纳零星工作区改动
             git -c rebase.autostash=true pull --rebase origin "${GITHUB_REF_NAME}"
             git push
