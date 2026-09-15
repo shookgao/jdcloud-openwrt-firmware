@@ -106,10 +106,9 @@ echo "==> [7/8] 注入 argon 默认主题、配色与加载弹窗样式"
 UCID="$BF/etc/uci-defaults"
 mkdir -p "$UCID"
 cat > "$UCID/99-jdcloud-argon" <<'EOF'
-# 用命名 section 显式创建, 无论主题包是否自带 /etc/config/argon 均幂等生效
-uci -q set argon.global=global
-uci set argon.global.primary='#009688'
-uci set argon.global.dark_mode='0'
+# 清理旧版误建的重复配置段, 对主题原生 section 直接设值
+uci -q delete argon.global
+uci set argon.@global[0].primary='#009688'
 # 激活 argon 为默认皮肤
 uci set luci.main.mediaurlbase='/luci-static/argon'
 uci commit argon
@@ -156,8 +155,9 @@ check "$BF/lib/upgrade/platform.sh" '. /lib/functions/bootconfig.sh'
 check "$IPQWIFI" 'jdcloud_re-cs-02'
 check "$IPQWIFI" 'link_nn6000'
 check "$BF/etc/uci-defaults/99-jdcloud-argon" "luci-static/argon"
-check "$BF/etc/uci-defaults/99-jdcloud-argon" 'argon.global.primary'
+check "$BF/etc/uci-defaults/99-jdcloud-argon" 'argon.@global[0].primary'
 check "$BF/etc/uci-defaults/99-jdcloud-argon" '#009688'
+check "$BF/etc/uci-defaults/99-jdcloud-argon" 'delete argon.global'
 check "$BF/etc/uci-defaults/99-jdcloud-apk" 'video/packages.adb'
 grep -rq --include='*.css' 'jdcloud' "$SRC/feeds/luci/themes/luci-theme-argon" 2>/dev/null \
 	|| { echo "  缺失: 弹窗样式注入 (feeds/luci css)"; ok=0; }
