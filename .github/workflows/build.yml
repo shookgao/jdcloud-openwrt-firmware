@@ -131,13 +131,26 @@ jobs:
           restore-keys: ccache-
 
       - name: 恢复工具链缓存
-        uses: klever1988/cachewrtbuild@main
+        uses: actions/cache@v4
         with:
-          # 恩山社区标准缓存方案: 内部处理新克隆源码 mtime 全新导致 make
-          # 误判重编的问题, 真正跳过工具链编译; 编译失败时不保存, 防止污染
-          toolchain: 'true'
-          ccache: 'false'
-          skip: 'true'
+          path: |
+            openwrt/staging_dir/toolchain-*
+            openwrt/staging_dir/host
+            openwrt/staging_dir/hostpkg
+          # 上游更换 gcc 大版本时目录名变化, 缓存自然失配并全量重建, 无需干预
+          key: toolchain-${{ needs.check.outputs.tag }}
+          restore-keys: toolchain-
+
+      - name: 刷新工具链时间戳
+        run: |
+          # git clone 出的源码 mtime 全部是"刚刚", 会让 make 误判"源码比缓存的
+          # 工具链新"而照常重编; 将缓存内容时间戳统一刷新到当前时刻,
+          # 使编译 stamp 新于所有源文件, make 才会真正跳过工具链编译
+          shopt -s nullglob
+          for d in openwrt/staging_dir/toolchain-* openwrt/staging_dir/host openwrt/staging_dir/hostpkg; do
+            [ -d "$d" ] && find "$d" -exec touch {} +
+          done
+          ls -d openwrt/staging_dir/* 2>/dev/null || echo "==> 未命中工具链缓存 (首次运行将全量编译并保存)"
 
       - name: 注入三台设备支持
         run: |
