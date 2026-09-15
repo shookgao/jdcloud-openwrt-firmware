@@ -63,13 +63,13 @@ if grep -rq "jdcloud,re-cs-02" "$BF/etc/board.d/02_network" 2>/dev/null; then
 	die "源码树似乎已注入过, 请使用干净的上游克隆"
 fi
 
-echo "==> [1/7] 注入设备树"
+echo "==> [1/8] 注入设备树"
 for f in ipq6010-re-cs-02.dts ipq6000-re-ss-01.dts ipq6000-link.dtsi ipq6000-nn6000-v1.dts ipq6000-nn6000-v2.dts; do
 	[ -f "$DEV/dts/$f" ] || die "缺少设备树文件: $f"
 	cp "$DEV/dts/$f" "$QCOM/files/arch/arm64/boot/dts/qcom/$f"
 done
 
-echo "==> [2/7] 注入 eMMC 双分区辅助库并挂接 platform.sh"
+echo "==> [2/8] 注入 eMMC 双分区辅助库并挂接 platform.sh"
 [ -f "$BF/lib/upgrade/platform.sh" ] || die "找不到 platform.sh"
 mkdir -p "$BF/lib/functions"
 cp "$DEV/base-files/bootconfig.sh" "$BF/lib/functions/bootconfig.sh"
@@ -79,24 +79,24 @@ printf '. /lib/functions/bootconfig.sh\n\n' > "$FRAG"
 insert_before_nth "PART_NAME=firmware" 1 "$FRAG" "$BF/lib/upgrade/platform.sh"
 sed -i "s/^RAMFS_COPY_BIN=.*/RAMFS_COPY_BIN='fw_printenv fw_setenv head seq'/" "$BF/lib/upgrade/platform.sh"
 
-echo "==> [3/7] 注入镜像定义 (image/ipq60xx.mk)"
+echo "==> [3/8] 注入镜像定义 (image/ipq60xx.mk)"
 MK="$QCOM/image/ipq60xx.mk"
 printf '\n' >> "$MK"
 cat "$DEV/patches/ipq60xx.mk.append" >> "$MK"
 
-echo "==> [4/7] 注入网口划分 (02_network)"
+echo "==> [4/8] 注入网口划分 (02_network)"
 NET="$BF/etc/board.d/02_network"
 insert_after_nth "	glinet,gl-ax1800|\\" 1 "$DEV/patches/net.ins.gl1800.after" "$NET"
 insert_before_nth "	glinet,gl-axt1800)" 1 "$DEV/patches/net.ins.axt1800.before" "$NET"
 insert_before_nth "	qihoo,360v6)" 1 "$DEV/patches/net.ins.360v6.before" "$NET"
 
-echo "==> [5/7] 注入无线校准提取 (11-ath11k-caldata)"
+echo "==> [5/8] 注入无线校准提取 (11-ath11k-caldata)"
 CAL="$BF/etc/hotplug.d/firmware/11-ath11k-caldata"
 insert_before_nth "	qihoo,360v6)" 1 "$DEV/patches/caldata.ins.360v6.before" "$CAL"
 # mr7500 在 AHB 与 QCN9074 两个 case 各出现一次, 取第 2 次
 insert_before_nth "	linksys,mr7500)" 2 "$DEV/patches/caldata.ins.mr7500.before" "$CAL"
 
-echo "==> [6/7] 注入 eMMC 升级流程与无线校准包注册"
+echo "==> [6/8] 注入 eMMC 升级流程与无线校准包注册"
 insert_before_nth "	yuncore,fap650)" 1 "$DEV/patches/platform.ins.fap650.before" "$BF/lib/upgrade/platform.sh"
 IPQWIFI="$SRC/package/firmware/ipq-wifi/Makefile"
 insert_after_nth "ALLWIFIBOARDS:= \\" 1 "$DEV/patches/ipqwifi.boards.after" "$IPQWIFI"
@@ -106,15 +106,19 @@ echo "==> [7/8] 注入 argon 默认主题、配色与加载弹窗样式"
 UCID="$BF/etc/uci-defaults"
 mkdir -p "$UCID"
 cat > "$UCID/99-jdcloud-argon" <<'EOF'
+# 用命名 section 显式创建, 无论主题包是否自带 /etc/config/argon 均幂等生效
+uci -q set argon.global=global
+uci set argon.global.primary='#009688'
+uci set argon.global.dark_mode='0'
+# 激活 argon 为默认皮肤
 uci set luci.main.mediaurlbase='/luci-static/argon'
-uci set argon.@global[0].primary='#009688'
-uci set argon.@global[0].dark_mode='0'
-uci commit
+uci commit argon
+uci commit luci
 EOF
 
-# luci-base 的加载/保存弹窗用固定蓝色, 往 argon 样式表末尾追加覆盖规则,
-# 用 var(--primary) 跟随主题色 (网页里换色时弹窗同步变化)
-ARGC="$SRC/themes/luci-theme-argon/htdocs/luci-static/argon/css"
+# luci-base 的加载/保存弹窗用固定蓝色, 往 argon 主题 css 末尾追加覆盖规则,
+# 用 var(--primary) 跟随主题色 (网页里换色时弹窗同步变化)。
+# 主题源码位于 luci feed 克隆中, 用 find 定位 css, 不依赖固定目录层级
 CSS_SNIP='
 /* [jdcloud] loading/confirm follow theme color */
 .spinning::before,
@@ -126,8 +130,8 @@ CSS_SNIP='
 	color: var(--primary, #009688);
 }
 '
-for f in "$ARGC"/*.css; do
-	[ -f "$f" ] && printf '%s\n' "$CSS_SNIP" >> "$f"
+for f in $(find "$SRC/feeds/luci/themes/luci-theme-argon" -type f -name '*.css' 2>/dev/null); do
+	printf '%s\n' "$CSS_SNIP" >> "$f"
 done
 
 echo "==> [8/8] 注入 apk 源修正 (uci-defaults)"
@@ -152,10 +156,11 @@ check "$BF/lib/upgrade/platform.sh" '. /lib/functions/bootconfig.sh'
 check "$IPQWIFI" 'jdcloud_re-cs-02'
 check "$IPQWIFI" 'link_nn6000'
 check "$BF/etc/uci-defaults/99-jdcloud-argon" "luci-static/argon"
+check "$BF/etc/uci-defaults/99-jdcloud-argon" 'argon.global.primary'
 check "$BF/etc/uci-defaults/99-jdcloud-argon" '#009688'
 check "$BF/etc/uci-defaults/99-jdcloud-apk" 'video/packages.adb'
-ls "$ARGC"/*.css >/dev/null 2>&1 || { echo "  缺失: 未找到 argon css 目录"; ok=0; }
-grep -q 'jdcloud' "$ARGC"/*.css 2>/dev/null || { echo "  缺失: 弹窗样式注入"; ok=0; }
+grep -rq --include='*.css' 'jdcloud' "$SRC/feeds/luci/themes/luci-theme-argon" 2>/dev/null \
+	|| { echo "  缺失: 弹窗样式注入 (feeds/luci css)"; ok=0; }
 ls "$QCOM/files/arch/arm64/boot/dts/qcom/" | grep -q ipq6010-re-cs-02.dts || { echo "  缺失: 设备树"; ok=0; }
 bash -n "$BF/lib/upgrade/platform.sh" || { echo "  platform.sh 语法错误"; ok=0; }
 sh -n "$NET" || { echo "  02_network 语法错误"; ok=0; }
