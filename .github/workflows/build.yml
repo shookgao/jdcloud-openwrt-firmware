@@ -130,6 +130,18 @@ jobs:
           key: ccache-${{ needs.check.outputs.sha }}
           restore-keys: ccache-
 
+      - name: 恢复工具链缓存
+        uses: actions/cache@v4
+        with:
+          path: |
+            openwrt/staging_dir/toolchain-*
+            openwrt/staging_dir/host
+            openwrt/staging_dir/hostpkg
+          # 工具链在 patch 版本间几乎不变, 按版本滚动可跳过约 60~90 分钟编译;
+          # 上游更换 gcc 大版本时目录名变化, 缓存自然失配并全量重建, 无需干预
+          key: toolchain-${{ needs.check.outputs.tag }}
+          restore-keys: toolchain-
+
       - name: 注入三台设备支持
         run: |
           chmod +x Scripts/inject.sh

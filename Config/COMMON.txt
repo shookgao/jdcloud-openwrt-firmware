@@ -30,7 +30,8 @@ CONFIG_PACKAGE_block-mount=y
 CONFIG_PACKAGE_kmod-tun=y
 
 # --- 界面主题 ---
-# argon 主题 + 配置插件 (官方 feed); 默认启用草绿色配色, 由 inject.sh 注入 uci-defaults 实现
+# argon 主题 + 配置插件 (官方 feed); 默认青绿色 (#009688) 配色,
+# 由 inject.sh 注入 uci-defaults 与弹窗样式实现
 CONFIG_PACKAGE_luci-theme-argon=y
 CONFIG_PACKAGE_luci-app-argon-config=y
 

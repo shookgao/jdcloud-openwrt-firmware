@@ -11,7 +11,9 @@
 #   4. bootconfig.sh 双分区辅助库 (platform.sh 依赖)
 #   5. ipq-wifi 无线校准包的设备注册 (校准数据本身 25.12 锁定的
 #      qca-wireless e20f4c6f 已包含, 无需注入)
-#   6. uci-defaults: argon 默认主题 + 草绿色配色 (开机首次启动生效)
+#   6. uci-defaults: argon 默认主题 + 青绿色配色 (开机首次启动生效),
+#      并追加 CSS 让加载/保存弹窗也跟随主题色
+#   7. uci-defaults: apk 源修正 (官方无 video 仓库, 注释该源防报错)
 
 set -euo pipefail
 
@@ -100,14 +102,38 @@ IPQWIFI="$SRC/package/firmware/ipq-wifi/Makefile"
 insert_after_nth "ALLWIFIBOARDS:= \\" 1 "$DEV/patches/ipqwifi.boards.after" "$IPQWIFI"
 insert_before_nth '$(eval $(call generate-ipq-wifi-package,' 1 "$DEV/patches/ipqwifi.eval.before" "$IPQWIFI"
 
-echo "==> [7/7] 注入 argon 默认主题与配色 (uci-defaults)"
+echo "==> [7/8] 注入 argon 默认主题、配色与加载弹窗样式"
 UCID="$BF/etc/uci-defaults"
 mkdir -p "$UCID"
 cat > "$UCID/99-jdcloud-argon" <<'EOF'
 uci set luci.main.mediaurlbase='/luci-static/argon'
-uci set argon.@global[0].primary='#0ea86f'
+uci set argon.@global[0].primary='#009688'
 uci set argon.@global[0].dark_mode='0'
 uci commit
+EOF
+
+# luci-base 的加载/保存弹窗用固定蓝色, 往 argon 样式表末尾追加覆盖规则,
+# 用 var(--primary) 跟随主题色 (网页里换色时弹窗同步变化)
+ARGC="$SRC/themes/luci-theme-argon/htdocs/luci-static/argon/css"
+CSS_SNIP='
+/* [jdcloud] loading/confirm follow theme color */
+.spinning::before,
+.spinning::after {
+	border-color: rgba(0, 150, 136, 0.25) !important;
+	border-top-color: var(--primary, #009688) !important;
+}
+.modal .alert-message {
+	color: var(--primary, #009688);
+}
+'
+for f in "$ARGC"/*.css; do
+	[ -f "$f" ] && printf '%s\n' "$CSS_SNIP" >> "$f"
+done
+
+echo "==> [8/8] 注入 apk 源修正 (uci-defaults)"
+cat > "$UCID/99-jdcloud-apk" <<'EOF'
+# ImmortalWrt 官方包仓库不含 video feed, 注释该源避免 apk 报错; 需要时去掉行首 # 即可
+sed -i 's|^https.*/video/packages.adb.*|#&|' /etc/apk/repositories
 EOF
 
 echo "==> 注入完成, 自检:"
@@ -126,7 +152,10 @@ check "$BF/lib/upgrade/platform.sh" '. /lib/functions/bootconfig.sh'
 check "$IPQWIFI" 'jdcloud_re-cs-02'
 check "$IPQWIFI" 'link_nn6000'
 check "$BF/etc/uci-defaults/99-jdcloud-argon" "luci-static/argon"
-check "$BF/etc/uci-defaults/99-jdcloud-argon" '#0ea86f'
+check "$BF/etc/uci-defaults/99-jdcloud-argon" '#009688'
+check "$BF/etc/uci-defaults/99-jdcloud-apk" 'video/packages.adb'
+ls "$ARGC"/*.css >/dev/null 2>&1 || { echo "  缺失: 未找到 argon css 目录"; ok=0; }
+grep -q 'jdcloud' "$ARGC"/*.css 2>/dev/null || { echo "  缺失: 弹窗样式注入"; ok=0; }
 ls "$QCOM/files/arch/arm64/boot/dts/qcom/" | grep -q ipq6010-re-cs-02.dts || { echo "  缺失: 设备树"; ok=0; }
 bash -n "$BF/lib/upgrade/platform.sh" || { echo "  platform.sh 语法错误"; ok=0; }
 sh -n "$NET" || { echo "  02_network 语法错误"; ok=0; }
