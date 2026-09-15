@@ -24,6 +24,10 @@ CONFIG_PACKAGE_kmod-fs-ntfs3=y
 # 块设备挂载框架 (插盘自动挂载到 /mnt)
 CONFIG_PACKAGE_block-mount=y
 
+# --- 文件传输 ---
+# SFTP 服务: 配合默认 SSH (dropbear), WinSCP / FileZilla 用 SFTP 协议直连拷贝文件
+CONFIG_PACKAGE_openssh-sftp-server=y
+
 # --- 通用内核依赖 ---
 # TUN/TAP 虚拟网卡: 事后安装 Tailscale / ZeroTier 等异地组网工具的前置依赖
 # (kmod 必须与固件内核匹配, 故直接编入固件)
