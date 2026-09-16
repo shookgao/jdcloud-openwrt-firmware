@@ -89,8 +89,9 @@ NET="$BF/etc/board.d/02_network"
 insert_after_nth "	glinet,gl-ax1800|\\" 1 "$DEV/patches/net.ins.gl1800.after" "$NET"
 insert_before_nth "	glinet,gl-axt1800)" 1 "$DEV/patches/net.ins.axt1800.before" "$NET"
 insert_before_nth "	qihoo,360v6)" 1 "$DEV/patches/net.ins.360v6.before" "$NET"
-# MAC 分配分支: 02_network 的第二个 case 块, 锚定其首个分支, 无需数出现次数
-insert_before_nth "	alfa-network,ap120c-ax)" 1 "$DEV/patches/net.ins.mac.before" "$NET"
+# MAC 分配分支: 02_network 有两个 case (网口划分 + MAC 分配), alfa-network 锚点
+# 在两者中各出现一次, 取第 2 次命中真正的 MAC 分配 case
+insert_before_nth "	alfa-network,ap120c-ax)" 2 "$DEV/patches/net.ins.mac.before" "$NET"
 
 echo "==> [5/8] 注入无线校准提取 (11-ath11k-caldata)"
 CAL="$BF/etc/hotplug.d/firmware/11-ath11k-caldata"
@@ -150,6 +151,10 @@ check "$NET" 'jdcloud,re-cs-02|\'
 check "$NET" 'link,nn6000-v1|\'
 check "$NET" 'jdcloud,re-ss-01|\'
 check "$NET" 'lan_mac=$(mmc_get_mac_binary 0:ART 6)'
+# MAC 分支必须位于 MAC 分配 case 内 (分支体内有 mmc_get_mac_binary),
+# 若误插到网口划分 case 会导致网口划分缺失、刷机后无法获取 IP
+sed -n '/^[[:space:]]*jdcloud,re-ss-01)[[:space:]]*$/,/^[[:space:]]*;;[[:space:]]*$/p' "$NET" | grep -q 'mmc_get_mac_binary' \
+	|| { echo "  错误: MAC 分支位置异常 (不在 MAC 分配 case 内)"; ok=0; }
 check "$CAL" 'jdcloud,re-cs-02)'
 check "$CAL" 'caldata_extract_mmc "0:ART" 0x26800 0x20000'
 check "$CAL" 'link,nn6000-v2)'
