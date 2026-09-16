@@ -205,13 +205,21 @@ jobs:
           )"
           NOTES="$NOTES
           上游版本: ${UP_TAG}"
-          # 同名 Release 已存在 (同日同上游重编) 时先删再建, 避免撞名导致发布失败
-          gh release delete "$TAG" --yes --cleanup-asset 2>/dev/null || true
-          gh api -X DELETE "repos/$GITHUB_REPOSITORY/git/refs/tags/$TAG" 2>/dev/null || true
-          gh release create "$TAG" output/* \
-            --title "ImmortalWrt $UP_TAG ($DATE)" \
-            --notes "$NOTES" \
-            --latest
+          # 同日同上游重编时旧 Release 已存在: 先删旧再建; 仍失败则向已有
+          # Release 覆盖上传 (--clobber), 保证任何情况下发布成功
+          gh release delete "$TAG" --yes --cleanup-asset || echo "(无旧 Release 或删除跳过)"
+          gh api -X DELETE "repos/$GITHUB_REPOSITORY/git/refs/tags/$TAG" || echo "(tag 不存在或已删除)"
+          if gh release create "$TAG" output/* \
+              --title "ImmortalWrt $UP_TAG ($DATE)" \
+              --notes "$NOTES" \
+              --latest; then
+            echo "==> Release 创建成功"
+          else
+            echo "==> create 失败, 改为向已有 Release 覆盖上传"
+            gh release upload "$TAG" output/* --clobber
+            gh release edit "$TAG" --latest \
+              --title "ImmortalWrt $UP_TAG ($DATE)" --notes "$NOTES"
+          fi
 
       - name: 记录本次上游版本
         env:
