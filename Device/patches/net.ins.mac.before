@@ -1,0 +1,16 @@
+	jdcloud,re-ss-01)
+		lan_mac=$(mmc_get_mac_binary 0:ART 6)
+		wan_mac=$(mmc_get_mac_binary 0:ART 0)
+		label_mac=$wan_mac
+		;;
+	jdcloud,re-cs-02)
+		lan_mac=$(mmc_get_mac_binary 0:ART 6)
+		wan_mac=$(mmc_get_mac_binary 0:ART 0)
+		label_mac=$wan_mac
+		;;
+	link,nn6000-v1|\
+	link,nn6000-v2)
+		lan_mac=$(mmc_get_mac_binary 0:ART 6)
+		wan_mac=$(mmc_get_mac_binary 0:ART 0)
+		label_mac=$wan_mac
+		;;

@@ -145,10 +145,11 @@ jobs:
         run: |
           # git clone 出的源码 mtime 全部是"刚刚", 会让 make 误判"源码比缓存的
           # 工具链新"而照常重编; 将缓存内容时间戳统一刷新到当前时刻,
-          # 使编译 stamp 新于所有源文件, make 才会真正跳过工具链编译
+          # 使编译 stamp 新于所有源文件, make 才会真正跳过工具链编译。
+          # host/bin 下有硬链接到系统工具的只读文件, 用 sudo 才能全部刷到
           shopt -s nullglob
           for d in openwrt/staging_dir/toolchain-* openwrt/staging_dir/host openwrt/staging_dir/hostpkg; do
-            [ -d "$d" ] && find "$d" -exec touch {} +
+            [ -d "$d" ] && sudo find "$d" -exec touch {} +
           done
           ls -d openwrt/staging_dir/* 2>/dev/null || echo "==> 未命中工具链缓存 (首次运行将全量编译并保存)"
 
