@@ -131,6 +131,12 @@ CSS_SNIP='
 .modal .alert-message {
 	color: var(--primary, #009688);
 }
+/* [jdcloud] notice/apply dialog follow theme color */
+.alert-message.notice,
+.modal.notice {
+	background-color: var(--primary, #009688) !important;
+	color: #fff !important;
+}
 '
 for f in $(find "$SRC/feeds/luci/themes/luci-theme-argon" -type f -name '*.css' 2>/dev/null); do
 	printf '%s\n' "$CSS_SNIP" >> "$f"
