@@ -1,6 +1,9 @@
 # 京东云三台路由器的 ImmortalWrt 云编译
 # 上游: immortalwrt 最新正式版 release (全自动检测, 跨大版本自动跟随)
 # 特点: 每天检查上游, 出新正式版才编译; 无第三方插件来源
+# 架构: 三台设备各占一个独立 runner 并行编译 (matrix)。
+#   原因: ipq-wifi 的 BDF 板卡包互相声明 CONFLICTS (都提供 board-2.bin),
+#   多机型混在一次编译里安装时 apk 会错误取舍, 导致部分机型缺 BDF、无线失效。
 
 name: Build
 
@@ -58,9 +61,13 @@ jobs:
           fi
 
   build:
-    name: 编译三台设备固件
+    name: 编译 ${{ matrix.device }}
     needs: check
     if: ${{ (github.event_name == 'workflow_dispatch' && inputs.force) || needs.check.outputs.should_build == 'true' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        device: [jdcloud_re-cs-02, jdcloud_re-ss-01, link_nn6000-v2]
     runs-on: ubuntu-latest
     timeout-minutes: 350
     env:
@@ -126,7 +133,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ${{ github.workspace }}/.ccache
-          # 每次编译按上游 SHA 存新缓存, restore-keys 取最近一份继续累积
+          # 三台设备共用一份 (内核与绝大部分软件包相同), 按上游 SHA 滚动
           key: ccache-${{ needs.check.outputs.sha }}
           restore-keys: ccache-
 
@@ -161,9 +168,13 @@ jobs:
       - name: 生成配置
         run: |
           cd openwrt
-          cat ../Config/DEVICES.txt ../Config/COMMON.txt > .config
+          # 目标平台与多机型开关照抄, 设备只保留本 job 对应的一台
+          grep -E '^CONFIG_TARGET_(qualcommax|MULTI_PROFILE)' ../Config/DEVICES.txt > .config
+          grep "DEVICE_${{ matrix.device }}=y" ../Config/DEVICES.txt >> .config
+          cat ../Config/COMMON.txt >> .config
           make defconfig
           grep -E "CONFIG_TARGET_DEVICE" .config || { echo "设备配置未生效"; exit 1; }
+          grep -q "DEVICE_${{ matrix.device }}=y" .config || { echo "本机设备配置未生效"; exit 1; }
 
       - name: 下载源码包
         run: |
@@ -176,20 +187,63 @@ jobs:
           cd openwrt
           make -j"$(nproc)" || make -j1 V=s
 
+      - name: 无线板卡数据自检
+        run: |
+          # BDF 缺失时 ath11k 不注册网卡, LuCI 无无线菜单; 必须在编译期拦下
+          cd openwrt
+          P=bin/targets/qualcommax/ipq60xx
+          if ls $P/*.manifest >/dev/null 2>&1; then
+            grep -q "ipq-wifi-${{ matrix.device }}" $P/*.manifest \
+              || { echo "!! 固件缺少无线板卡数据包 ipq-wifi-${{ matrix.device }}, 无线将不可用"; exit 1; }
+            echo "==> BDF 自检通过 (manifest): ${{ matrix.device }}"
+          else
+            grep -q "ipq-wifi-${{ matrix.device }}" staging_dir/target-*/root-qualcommax/lib/apk/db/installed \
+              || { echo "!! 固件缺少无线板卡数据包, 无线将不可用"; exit 1; }
+            echo "==> BDF 自检通过 (apk db): ${{ matrix.device }}"
+          fi
+
       - name: 整理产物
         run: |
           cd openwrt/bin/targets/qualcommax/ipq60xx
           mkdir -p "$GITHUB_WORKSPACE/output"
-          cp -f *sysupgrade* *factory* sha256sums config.build 2>/dev/null \
-            "$GITHUB_WORKSPACE/output/" || true
+          cp -f *sysupgrade* *factory* "$GITHUB_WORKSPACE/output/"
           cd "$GITHUB_WORKSPACE/output"
           ls -la
 
+      - name: 上传编译产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: firmware-${{ matrix.device }}
+          path: output/*
+
+  release:
+    name: 发布 Release 与记录版本
+    needs: [check, build]
+    if: ${{ (github.event_name == 'workflow_dispatch' && inputs.force) || needs.check.outputs.should_build == 'true' }}
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      UP_SHA: ${{ needs.check.outputs.sha }}
+      UP_TAG: ${{ needs.check.outputs.tag }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: 合并三台设备产物
+        uses: actions/download-artifact@v4
+        with:
+          path: output
+          merge-multiple: true
+
+      - name: 生成校验和
+        run: |
+          cd output
+          # 三个 job 的固件在此汇合, 统一生成全量 sha256sums
+          [ "$(ls ./*.bin | wc -l)" -eq 6 ] || { echo "!! 固件数量异常, 应为 6 个"; ls -la; exit 1; }
+          sha256sum ./*.bin > sha256sums
+          ls -la
+
       - name: 发布 Release
-        env:
-          GH_TOKEN: ${{ github.token }}
-          UP_SHA: ${{ needs.check.outputs.sha }}
-          UP_TAG: ${{ needs.check.outputs.tag }}
         run: |
           DATE="$(TZ=Asia/Shanghai date +%Y%m%d)"
           TAG="auto-${DATE}-${UP_TAG}"
@@ -222,9 +276,6 @@ jobs:
           fi
 
       - name: 记录本次上游版本
-        env:
-          UP_SHA: ${{ needs.check.outputs.sha }}
-          UP_TAG: ${{ needs.check.outputs.tag }}
         run: |
           echo "$UP_SHA" > .last-build-sha
           git config user.name "github-actions[bot]"
