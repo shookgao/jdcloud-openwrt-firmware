@@ -191,15 +191,20 @@ jobs:
         run: |
           # BDF 缺失时 ath11k 不注册网卡, LuCI 无无线菜单; 必须在编译期拦下
           cd openwrt
+          # 设备 ID 与 BDF 包名不同款的特例: link_nn6000-v2 → ipq-wifi-link_nn6000 (v1/v2 共用)
+          case "${{ matrix.device }}" in
+            link_nn6000-v2) BDF="ipq-wifi-link_nn6000" ;;
+            *)              BDF="ipq-wifi-${{ matrix.device }}" ;;
+          esac
           P=bin/targets/qualcommax/ipq60xx
           if ls $P/*.manifest >/dev/null 2>&1; then
-            grep -q "ipq-wifi-${{ matrix.device }}" $P/*.manifest \
-              || { echo "!! 固件缺少无线板卡数据包 ipq-wifi-${{ matrix.device }}, 无线将不可用"; exit 1; }
-            echo "==> BDF 自检通过 (manifest): ${{ matrix.device }}"
+            grep -q "$BDF" $P/*.manifest \
+              || { echo "!! 固件缺少无线板卡数据包 $BDF, 无线将不可用"; exit 1; }
+            echo "==> BDF 自检通过 (manifest): $BDF"
           else
-            grep -q "ipq-wifi-${{ matrix.device }}" staging_dir/target-*/root-qualcommax/lib/apk/db/installed \
+            grep -q "$BDF" staging_dir/target-*/root-qualcommax/lib/apk/db/installed \
               || { echo "!! 固件缺少无线板卡数据包, 无线将不可用"; exit 1; }
-            echo "==> BDF 自检通过 (apk db): ${{ matrix.device }}"
+            echo "==> BDF 自检通过 (apk db): $BDF"
           fi
 
       - name: 整理产物
