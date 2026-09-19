@@ -196,7 +196,6 @@ jobs:
     runs-on: ubuntu-24.04
     env:
       GH_TOKEN: ${{ github.token }}
-      UP_SHA: ${{ env.UPSTREAM_COMMIT }}
     steps:
       - name: Checkout
         uses: actions/checkout@v5
@@ -216,20 +215,22 @@ jobs:
           ls -la
 
       - name: 发布 Release
+        env:
+          UP_SHA: ${{ env.UPSTREAM_COMMIT }}
         run: |
           DATE="$(TZ=Asia/Shanghai date +%Y%m%d)"
           TAG="auto-${DATE}-${UP_SHA:0:7}"
           NOTES="$(cat <<'EOF'
           自动编译, 基于 VIKINGYFY/immortalwrt NSS 平台 (内核 6.18, NSS 全加速)。
 
-          设备: 京东云雅典娜 RE-CS-02 / 京东云 RE-SS-01 / 连我 NN6000 v2
-          源码锁定: ${UP_SHA}
-
           刷机: eMMC 设备用 sysupgrade 包在 LuCI 或 sysupgrade 命令升级;
           从原厂系统/U-Boot 刷入用 factory 包 (第三方 U-Boot, 教程见恩山论坛)。
           校验: 下载后请核对 sha256sums。
           EOF
           )"
+          NOTES="$NOTES
+          设备: 京东云雅典娜 RE-CS-02 / 京东云 RE-SS-01 / 连我 NN6000 v2
+          源码锁定: ${UP_SHA}"
           # 同日同源重编时旧 Release 已存在: 先删旧再建; 仍失败则向已有
           # Release 覆盖上传 (--clobber), 保证任何情况下发布成功
           gh release delete "$TAG" --yes --cleanup-asset || echo "(无旧 Release 或删除跳过)"
