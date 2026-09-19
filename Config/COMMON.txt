@@ -1,6 +1,6 @@
 # 本文件定义固件的通用软件配置。
 # 原则: 只用 immortalwrt 官方 feeds 自带的包, 不引入任何第三方来源。
-# 平台默认已含 (qualcommax target): NSS 加速驱动、USB3、自动挂载、
+# 平台默认已含 (NSS 平台源码): NSS 全加速栈、f2fs 持久化、USB3、自动挂载、
 # luci-app-cpufreq、autocore、wpad-openssl, 无需在此重复。
 
 # --- 基础系统 ---
@@ -27,6 +27,11 @@ CONFIG_PACKAGE_block-mount=y
 # --- 文件传输 ---
 # SFTP 服务: 配合默认 SSH (dropbear), WinSCP / FileZilla 用 SFTP 协议直连拷贝文件
 CONFIG_PACKAGE_openssh-sftp-server=y
+
+# --- 常用工具 ---
+CONFIG_PACKAGE_htop=y
+CONFIG_PACKAGE_blkid=y
+CONFIG_PACKAGE_lsblk=y
 
 # --- 通用内核依赖 ---
 # TUN/TAP 虚拟网卡: 事后安装 Tailscale / ZeroTier 等异地组网工具的前置依赖

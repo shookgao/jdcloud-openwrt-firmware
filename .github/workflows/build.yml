@@ -1,24 +1,22 @@
-# 京东云三台路由器的 ImmortalWrt 云编译
-# 上游: immortalwrt 最新正式版 release (全自动检测, 跨大版本自动跟随)
-# 特点: 每天检查上游, 出新正式版才编译; 无第三方插件来源
-# 架构: 三台设备各占一个独立 runner 并行编译 (matrix)。
-#   原因: ipq-wifi 的 BDF 板卡包互相声明 CONFLICTS (都提供 board-2.bin),
-#   多机型混在一次编译里安装时 apk 会错误取舍, 导致部分机型缺 BDF、无线失效。
+# 京东云三台路由器的 ImmortalWrt-NSS 云编译
+# 源码: VIKINGYFY/immortalwrt — NSS 全加速平台层 (内核 6.18, 含 qca-nss-drv/ecm
+#       与无线 NSS 卸载), 三台设备原生支持, f2fs 持久化层默认自带
+# 策略: 锁定源码 commit (不自动跟随上游)。升级 = 修改 UPSTREAM_COMMIT 后手动触发,
+#       验证通过即为新 known-good; 旧 commit 号可随时回退。
+# 注入: 仅叠加我们独有三项 — MAC 原厂化 / argon 主题与弹窗配色 / apk 源修正
+#       (见 Scripts/inject.sh), 其余全部使用上游原味代码。
 
 name: Build
 
 on:
   workflow_dispatch:
-    inputs:
-      force:
-        description: "跳过上游检查, 强制编译"
-        type: boolean
-        default: false
-  schedule:
-    - cron: "0 22 * * *"   # UTC 22:00 = 北京时间 06:00, 每天检查
 
 env:
-  UPSTREAM_REPO: "https://github.com/immortalwrt/immortalwrt"
+  UPSTREAM_REPO: "https://github.com/VIKINGYFY/immortalwrt"
+  # 锁定的 known-good 源码版本:
+  # 对应其发布版 IPQ60XX-WIFI-YES-VIKINGYFY-main-26.09.19-09.07.56,
+  # 完整 CI 构建 + 社区验证。升级前先 diff 上游新提交, 只挑 NSS/无线相关的动。
+  UPSTREAM_COMMIT: "87b57bffcc954cfa3de9516eaee8524289f99d18"
 
 permissions:
   contents: write
@@ -28,42 +26,8 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  check:
-    name: 检查上游更新
-    runs-on: ubuntu-24.04
-    outputs:
-      should_build: ${{ steps.diff.outputs.should_build }}
-      sha: ${{ steps.diff.outputs.sha }}
-      tag: ${{ steps.diff.outputs.tag }}
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v5
-
-      - name: 检测上游最新正式版
-        id: diff
-        run: |
-          UP_TAG="$(git ls-remote --refs "$UPSTREAM_REPO" 'refs/tags/v*' \
-            | sed 's|.*refs/tags/||' | grep -v -- '-rc' | sort -rV | head -n1)"
-          if [ -z "$UP_TAG" ]; then echo "无法获取上游 release 列表"; exit 1; fi
-          UP_SHA="$(git ls-remote --refs "$UPSTREAM_REPO" "refs/tags/$UP_TAG" | cut -f1)"
-          if [ -z "$UP_SHA" ]; then echo "无法获取 $UP_TAG 的提交号"; exit 1; fi
-          LAST="$(cat .last-build-sha 2>/dev/null || echo none)"
-          echo "上游最新: $UP_TAG ($UP_SHA)"
-          echo "上次编译: $LAST"
-          echo "tag=$UP_TAG" >> "$GITHUB_OUTPUT"
-          echo "sha=$UP_SHA" >> "$GITHUB_OUTPUT"
-          if [ "$UP_SHA" != "$LAST" ]; then
-            echo "有新正式版, 需要编译"
-            echo "should_build=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "上游无变化, 跳过编译"
-            echo "should_build=false" >> "$GITHUB_OUTPUT"
-          fi
-
   build:
     name: 编译 ${{ matrix.device }}
-    needs: check
-    if: ${{ (github.event_name == 'workflow_dispatch' && inputs.force) || needs.check.outputs.should_build == 'true' }}
     strategy:
       fail-fast: false
       matrix:
@@ -106,13 +70,14 @@ jobs:
             rsync scons squashfs-tools subversion swig texinfo uglifyjs unzip vim wget \
             xmlto xxd zlib1g-dev zstd
 
-      - name: 拉取上游源码
-        env:
-          UP_TAG: ${{ needs.check.outputs.tag }}
+      - name: 拉取上游源码 (锁定版本)
         run: |
-          git clone --depth 1 --branch "$UP_TAG" "$UPSTREAM_REPO" openwrt
+          git init openwrt
           cd openwrt
-          echo "上游版本: $UP_TAG ($(git rev-parse --short HEAD)) $(git log -1 --format=%cd --date=short)"
+          git remote add origin "$UPSTREAM_REPO"
+          git fetch --depth=1 origin "$UPSTREAM_COMMIT"
+          git checkout FETCH_HEAD
+          echo "==> 源码版本: ${UPSTREAM_COMMIT:0:7} ($(git log -1 --format=%ci))"
 
       - name: 更新并安装 feeds
         run: |
@@ -125,17 +90,17 @@ jobs:
         uses: actions/cache@v6
         with:
           path: openwrt/dl
-          # 跟随上游版本滚动: 新版本存新 key, restore-keys 兜底取最近一份
-          key: dl-${{ needs.check.outputs.tag }}
-          restore-keys: dl-
+          # 换源码基线时靠 restore-keys 兜底取最近一份
+          key: dl-nss-${{ env.UPSTREAM_COMMIT }}
+          restore-keys: dl-nss-
 
       - name: 恢复编译缓存
         uses: actions/cache@v6
         with:
           path: ${{ github.workspace }}/.ccache
-          # 三台设备共用一份 (内核与绝大部分软件包相同), 按上游 SHA 滚动
-          key: ccache-${{ needs.check.outputs.sha }}
-          restore-keys: ccache-
+          # 三台设备共用一份 (内核与绝大部分软件包相同)
+          key: ccache-nss-${{ env.UPSTREAM_COMMIT }}
+          restore-keys: ccache-nss-
 
       - name: 恢复工具链缓存
         uses: actions/cache@v6
@@ -145,8 +110,8 @@ jobs:
             openwrt/staging_dir/host
             openwrt/staging_dir/hostpkg
           # 上游更换 gcc 大版本时目录名变化, 缓存自然失配并全量重建, 无需干预
-          key: toolchain-${{ needs.check.outputs.tag }}
-          restore-keys: toolchain-
+          key: toolchain-nss-${{ env.UPSTREAM_COMMIT }}
+          restore-keys: toolchain-nss-
 
       - name: 刷新工具链时间戳
         run: |
@@ -160,7 +125,7 @@ jobs:
           done
           ls -d openwrt/staging_dir/* 2>/dev/null || echo "==> 未命中工具链缓存 (首次运行将全量编译并保存)"
 
-      - name: 注入三台设备支持
+      - name: 注入自有修正
         run: |
           chmod +x Scripts/inject.sh
           ./Scripts/inject.sh "$PWD/openwrt"
@@ -187,24 +152,28 @@ jobs:
           cd openwrt
           make -j"$(nproc)" || make -j1 V=s
 
-      - name: 无线板卡数据自检
+      - name: 无线板卡与 NSS 组件自检
         run: |
-          # BDF 缺失时 ath11k 不注册网卡, LuCI 无无线菜单; 必须在编译期拦下
+          # BDF 缺失则 ath11k 不注册网卡; NSS 缺失则失去硬件加速,
+          # 两者任一缺失都必须在编译期拦下
           cd openwrt
-          # 设备 ID 与 BDF 包名不同款的特例: link_nn6000-v2 → ipq-wifi-link_nn6000 (v1/v2 共用)
+          P=bin/targets/qualcommax/ipq60xx
+          # 本机对应的 BDF 包名 (link_nn6000-v2 → ipq-wifi-link_nn6000, v1/v2 共用)
           case "${{ matrix.device }}" in
             link_nn6000-v2) BDF="ipq-wifi-link_nn6000" ;;
             *)              BDF="ipq-wifi-${{ matrix.device }}" ;;
           esac
-          P=bin/targets/qualcommax/ipq60xx
           if ls $P/*.manifest >/dev/null 2>&1; then
             grep -q "$BDF" $P/*.manifest \
-              || { echo "!! 固件缺少无线板卡数据包 $BDF, 无线将不可用"; exit 1; }
-            echo "==> BDF 自检通过 (manifest): $BDF"
+              || { echo "!! 缺少无线板卡数据包 $BDF, 无线将不可用"; exit 1; }
+            grep -q "kmod-qca-nss-ecm" $P/*.manifest \
+              || { echo "!! 缺少 NSS 加速组件 kmod-qca-nss-ecm"; exit 1; }
+            echo "==> 自检通过 (manifest): $BDF + kmod-qca-nss-ecm"
           else
-            grep -q "$BDF" staging_dir/target-*/root-qualcommax/lib/apk/db/installed \
-              || { echo "!! 固件缺少无线板卡数据包, 无线将不可用"; exit 1; }
-            echo "==> BDF 自检通过 (apk db): $BDF"
+            DB=staging_dir/target-*/root-qualcommax/lib/apk/db/installed
+            grep -q "$BDF" $DB || { echo "!! 缺少无线板卡数据包, 无线将不可用"; exit 1; }
+            grep -q "kmod-qca-nss-ecm" $DB || { echo "!! 缺少 NSS 加速组件"; exit 1; }
+            echo "==> 自检通过 (apk db): $BDF + kmod-qca-nss-ecm"
           fi
 
       - name: 整理产物
@@ -222,14 +191,12 @@ jobs:
           path: output/*
 
   release:
-    name: 发布 Release 与记录版本
-    needs: [check, build]
-    if: ${{ (github.event_name == 'workflow_dispatch' && inputs.force) || needs.check.outputs.should_build == 'true' }}
+    name: 发布 Release
+    needs: build
     runs-on: ubuntu-24.04
     env:
       GH_TOKEN: ${{ github.token }}
-      UP_SHA: ${{ needs.check.outputs.sha }}
-      UP_TAG: ${{ needs.check.outputs.tag }}
+      UP_SHA: ${{ env.UPSTREAM_COMMIT }}
     steps:
       - name: Checkout
         uses: actions/checkout@v5
@@ -251,25 +218,24 @@ jobs:
       - name: 发布 Release
         run: |
           DATE="$(TZ=Asia/Shanghai date +%Y%m%d)"
-          TAG="auto-${DATE}-${UP_TAG}"
+          TAG="auto-${DATE}-${UP_SHA:0:7}"
           NOTES="$(cat <<'EOF'
-          自动编译, 基于 immortalwrt 25.12 系列正式版。
+          自动编译, 基于 VIKINGYFY/immortalwrt NSS 平台 (内核 6.18, NSS 全加速)。
 
           设备: 京东云雅典娜 RE-CS-02 / 京东云 RE-SS-01 / 连我 NN6000 v2
+          源码锁定: ${UP_SHA}
 
           刷机: eMMC 设备用 sysupgrade 包在 LuCI 或 sysupgrade 命令升级;
-          从原厂系统刷入请先刷对应机型的第三方 U-Boot (教程见恩山论坛)。
+          从原厂系统/U-Boot 刷入用 factory 包 (第三方 U-Boot, 教程见恩山论坛)。
           校验: 下载后请核对 sha256sums。
           EOF
           )"
-          NOTES="$NOTES
-          上游版本: ${UP_TAG}"
-          # 同日同上游重编时旧 Release 已存在: 先删旧再建; 仍失败则向已有
+          # 同日同源重编时旧 Release 已存在: 先删旧再建; 仍失败则向已有
           # Release 覆盖上传 (--clobber), 保证任何情况下发布成功
           gh release delete "$TAG" --yes --cleanup-asset || echo "(无旧 Release 或删除跳过)"
           gh api -X DELETE "repos/$GITHUB_REPOSITORY/git/refs/tags/$TAG" || echo "(tag 不存在或已删除)"
           if gh release create "$TAG" output/* \
-              --title "ImmortalWrt $UP_TAG ($DATE)" \
+              --title "ImmortalWrt-NSS (${UP_SHA:0:7}, $DATE)" \
               --notes "$NOTES" \
               --latest; then
             echo "==> Release 创建成功"
@@ -277,21 +243,5 @@ jobs:
             echo "==> create 失败, 改为向已有 Release 覆盖上传"
             gh release upload "$TAG" output/* --clobber
             gh release edit "$TAG" --latest \
-              --title "ImmortalWrt $UP_TAG ($DATE)" --notes "$NOTES"
-          fi
-
-      - name: 记录本次上游版本
-        run: |
-          echo "$UP_SHA" > .last-build-sha
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add .last-build-sha
-          # 同一上游版本重编时内容无变化, git commit 会报 nothing to commit, 直接跳过
-          if git diff --cached --quiet; then
-            echo "上游版本未变化, 无需记录"
-          else
-            git commit -m "build: 上游 ${UP_TAG}"
-            # 防止编译期间有人推送过新提交导致 non-fast-forward; autostash 收纳零星工作区改动
-            git -c rebase.autostash=true pull --rebase origin "${GITHUB_REF_NAME}"
-            git push
+              --title "ImmortalWrt-NSS (${UP_SHA:0:7}, $DATE)" --notes "$NOTES"
           fi
